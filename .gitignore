@@ -1,0 +1,19 @@
+# Build output
+HeadScroller.app/
+HeadScroller.zip
+HeadScrollerMenuBar
+AppIcon.iconset/
+
+# Runtime files
+headscroller.log
+settings.json
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude Code
+.claude/

@@ -4,27 +4,68 @@ A macOS menu bar app that lets you scroll by tilting your head. Uses your webcam
 
 ## Requirements
 
-- macOS 13+
+- macOS 13+ (Apple Silicon)
 - Python 3
 - Webcam
 
-## Install
+## Install from source
 
 ```bash
+git clone https://github.com/harsher216/headscroller.git
+cd headscroller
+
 # Install Python dependencies
 pip3 install -r requirements.txt
 
-# Download the MediaPipe face model (if not included)
-curl -L -o face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task
-
-# Build the app
+# Build the .app bundle
 ./build.sh
 
 # Run it
 open HeadScroller.app
+```
 
-# Or install to Applications
+## Install to Applications (optional)
+
+```bash
 cp -R HeadScroller.app /Applications/
+```
+
+## Auto-start on login
+
+To have HeadScroller start automatically when you log in:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+
+cat > ~/Library/LaunchAgents/com.headscroller.menubar.plist << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.headscroller.menubar</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/HeadScroller.app/Contents/MacOS/HeadScrollerMenuBar</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+EOF
+
+launchctl load ~/Library/LaunchAgents/com.headscroller.menubar.plist
+```
+
+If you installed the app somewhere other than `/Applications/`, update the path above accordingly.
+
+To stop auto-start:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.headscroller.menubar.plist
+rm ~/Library/LaunchAgents/com.headscroller.menubar.plist
 ```
 
 ## Usage
@@ -37,6 +78,20 @@ cp -R HeadScroller.app /Applications/
 
 ## Permissions
 
-The app will ask for:
+macOS will prompt you for:
 - **Camera access** — to track your head
-- **Accessibility access** — to send scroll events
+- **Accessibility access** — to send scroll events (System Settings > Privacy & Security > Accessibility)
+
+## Settings
+
+Settings are saved to `~/Library/Application Support/HeadScroller/settings.json` and persist between sessions. You can adjust everything from the menu bar dropdown:
+
+- **Sensitivity** — how fast scrolling responds to head movement
+- **Dead Zone** — how much head tilt is ignored (prevents accidental scrolling)
+- **Camera** — which camera to use (if you have multiple)
+
+## Troubleshooting
+
+- **App doesn't scroll**: Make sure Accessibility access is granted in System Settings > Privacy & Security > Accessibility
+- **Wrong camera selected**: Change it from the Camera submenu. Camera 0 is usually an iPhone (Continuity Camera), Camera 1 is usually the built-in MacBook camera
+- **Tracking feels off**: Click Recalibrate and hold your head in a neutral position

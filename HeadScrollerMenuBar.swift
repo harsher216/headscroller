@@ -32,9 +32,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return (CommandLine.arguments[0] as NSString).deletingLastPathComponent
     }()
 
+    let dataDir: String = {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("HeadScroller").path
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
     var scriptPath: String { (baseDir as NSString).appendingPathComponent("headscroller.py") }
-    var settingsPath: String { (baseDir as NSString).appendingPathComponent("settings.json") }
-    var logPath: String { (baseDir as NSString).appendingPathComponent("headscroller.log") }
+    var settingsPath: String { (dataDir as NSString).appendingPathComponent("settings.json") }
+    var logPath: String { (dataDir as NSString).appendingPathComponent("headscroller.log") }
 
     func loadSettings() {
         let url = URL(fileURLWithPath: settingsPath)
@@ -211,7 +218,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             process = proc
             isTracking = true
             toggleItem.title = "Stop Tracking"
-            statusItem.button?.title = ""
             statusLabel.title = "Status: Tracking"
         } catch {
             statusLabel.title = "Status: Error launching"
@@ -223,7 +229,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         process = nil
         isTracking = false
         toggleItem.title = "Start Tracking"
-        statusItem.button?.title = "🫠"
         statusLabel.title = "Status: Stopped"
     }
 
@@ -278,7 +283,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if isTracking, let proc = process, !proc.isRunning {
             isTracking = false
             toggleItem.title = "Start Tracking"
-            statusItem.button?.title = "🫠"
             statusLabel.title = "Status: Crashed — restart"
         }
     }

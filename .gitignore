@@ -3,6 +3,9 @@ HeadScroller.app/
 HeadScroller.zip
 HeadScrollerMenuBar
 AppIcon.iconset/
+dist/
+build/
+*.spec
 
 # Runtime files
 headscroller.log

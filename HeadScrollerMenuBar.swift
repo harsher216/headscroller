@@ -179,11 +179,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         loadSettings()
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        let binaryPath = (baseDir as NSString).appendingPathComponent("headscroller")
+        proc.executableURL = URL(fileURLWithPath: binaryPath)
 
         var args = [
-            "-u",
-            scriptPath,
             "--cam", String(settings.cam),
             "--sensitivity", String(settings.sensitivity),
             "--deadzone", String(settings.deadzone),

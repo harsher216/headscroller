@@ -1,4 +1,5 @@
 import Cocoa
+import AVFoundation
 
 struct Settings: Codable {
     var sensitivity: Double
@@ -11,6 +12,8 @@ struct Settings: Codable {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var process: Process?
+    var stdinHandle: FileHandle?
+    var pyReady = false
     var previewProcess: Process?
     var isTracking = false
     var showingPreview = false
@@ -25,9 +28,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var dzItems: [NSMenuItem] = []
 
     let baseDir: String = {
-        if let resourcePath = Bundle.main.resourcePath,
-           FileManager.default.fileExists(atPath: (resourcePath as NSString).appendingPathComponent("headscroller.py")) {
-            return resourcePath
+        if let resourcePath = Bundle.main.resourcePath {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: (resourcePath as NSString).appendingPathComponent("headscroller.py")) ||
+               fm.fileExists(atPath: (resourcePath as NSString).appendingPathComponent("headscroller")) ||
+               fm.fileExists(atPath: (resourcePath as NSString).appendingPathComponent("MenuBarIcon.png")) {
+                return resourcePath
+            }
         }
         return (CommandLine.arguments[0] as NSString).deletingLastPathComponent
     }()
@@ -156,6 +163,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.updateStatus()
         }
+
+        // Prewarm the Python worker so Start Tracking is instant
+        ensureCamera { [weak self] _ in
+            self?.ensurePyRunning()
+        }
     }
 
     // ── Tracking ────────────────────────────────────────────────────────
@@ -175,39 +187,149 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         event.post(tap: .cghidEventTap)
     }
 
+    func openPrivacyPane(_ anchor: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func showPermissionAlert(title: String, body: String, anchor: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = body
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            openPrivacyPane(anchor)
+        }
+    }
+
+    func ensureAccessibility() -> Bool {
+        return AXIsProcessTrustedWithOptions([
+            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false
+        ] as CFDictionary)
+    }
+
+    func ensureCamera(_ completion: @escaping (Bool) -> Void) {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            completion(true)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async { completion(granted) }
+            }
+        default:
+            completion(false)
+        }
+    }
+
     func startTracking() {
         loadSettings()
+
+        if !ensureAccessibility() {
+            statusLabel.title = "Status: Needs Accessibility"
+            showPermissionAlert(
+                title: "Accessibility permission required",
+                body: "HeadScroller needs Accessibility access to post scroll events. Toggle HeadScroller on in Privacy & Security → Accessibility, then quit and relaunch the app.",
+                anchor: "Privacy_Accessibility"
+            )
+            return
+        }
+
+        ensureCamera { [weak self] granted in
+            guard let self = self else { return }
+            if !granted {
+                self.statusLabel.title = "Status: Needs Camera"
+                self.showPermissionAlert(
+                    title: "Camera permission required",
+                    body: "HeadScroller needs camera access to track head movement. Enable HeadScroller in Privacy & Security → Camera, then click Start Tracking.",
+                    anchor: "Privacy_Camera"
+                )
+                return
+            }
+            self.ensurePyRunning()
+            self.sendCommand("START")
+            self.isTracking = true
+            self.toggleItem.title = "Stop Tracking"
+            self.statusLabel.title = self.pyReady ? "Status: Starting camera…" : "Status: Loading…"
+        }
+    }
+
+    func sendCommand(_ cmd: String) {
+        guard let handle = stdinHandle else { return }
+        if let data = (cmd + "\n").data(using: .utf8) {
+            try? handle.write(contentsOf: data)
+        }
+    }
+
+    func ensurePyRunning() {
+        if let p = process, p.isRunning { return }
 
         let proc = Process()
         let binaryPath = (baseDir as NSString).appendingPathComponent("headscroller")
         proc.executableURL = URL(fileURLWithPath: binaryPath)
+        proc.arguments = ["--control"]
 
-        var args = [
-            "--cam", String(settings.cam),
-            "--sensitivity", String(settings.sensitivity),
-            "--deadzone", String(settings.deadzone),
-            "--pipe-scroll",
-        ]
-        if !showingPreview {
-            args.append("--no-window")
-        }
-
-        proc.arguments = args
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
+        let outPipe = Pipe()
+        let inPipe = Pipe()
+        proc.standardOutput = outPipe
+        proc.standardInput = inPipe
         FileManager.default.createFile(atPath: logPath, contents: nil)
         let logHandle = FileHandle(forWritingAtPath: logPath)
         proc.standardError = logHandle ?? FileHandle.nullDevice
 
-        // Read scroll commands and post CGEvents
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        let logURL = URL(fileURLWithPath: logPath)
+        outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let str = String(data: data, encoding: .utf8) else { return }
             for line in str.split(separator: "\n") {
-                if line.hasPrefix("SCROLL:"),
-                   let val = Int32(line.dropFirst(7)) {
+                let s = String(line)
+                if s.hasPrefix("SCROLL:"), let val = Int32(s.dropFirst(7)) {
                     self?.postScroll(val)
+                    continue
+                }
+                if let d = (s + "\n").data(using: .utf8),
+                   let fh = try? FileHandle(forWritingTo: logURL) {
+                    fh.seekToEndOfFile()
+                    fh.write(d)
+                    try? fh.close()
+                }
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if s == "READY" {
+                        self.pyReady = true
+                        if !self.isTracking { self.statusLabel.title = "Status: Ready" }
+                    } else if s == "Calibrating" {
+                        if self.isTracking { self.statusLabel.title = "Status: Calibrating — look at camera" }
+                    } else if s == "Calibrated" {
+                        if self.isTracking { self.statusLabel.title = "Status: Tracking" }
+                    } else if s == "STOPPED" {
+                        // py back to idle; ready for next START
+                    } else if s.hasPrefix("ERROR:") {
+                        self.isTracking = false
+                        self.toggleItem.title = "Start Tracking"
+                        self.statusLabel.title = "Status: \(s)"
+                    }
+                }
+            }
+        }
+
+        proc.terminationHandler = { [weak self] p in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.pyReady = false
+                self.stdinHandle = nil
+                self.process = nil
+                if self.isTracking {
+                    self.isTracking = false
+                    self.toggleItem.title = "Start Tracking"
+                    let tail = self.tailLog(lines: 3)
+                    self.statusLabel.title = "Status: Crashed"
+                    let alert = NSAlert()
+                    alert.messageText = "HeadScroller worker stopped unexpectedly"
+                    alert.informativeText = tail.isEmpty ? "Exit code \(p.terminationStatus)." : tail
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
                 }
             }
         }
@@ -215,20 +337,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try proc.run()
             process = proc
-            isTracking = true
-            toggleItem.title = "Stop Tracking"
-            statusLabel.title = "Status: Tracking"
+            stdinHandle = inPipe.fileHandleForWriting
+            if statusLabel != nil, !isTracking { statusLabel.title = "Status: Loading…" }
         } catch {
-            statusLabel.title = "Status: Error launching"
+            statusLabel.title = "Status: Error launching worker"
         }
     }
 
+    func tailLog(lines: Int) -> String {
+        guard let data = try? String(contentsOfFile: logPath, encoding: .utf8) else { return "" }
+        let all = data.split(separator: "\n", omittingEmptySubsequences: true)
+        let slice = all.suffix(lines).joined(separator: "\n")
+        return slice
+    }
+
     func stopTracking() {
-        process?.terminate()
-        process = nil
+        if process?.isRunning == true {
+            sendCommand("STOP")
+        }
         isTracking = false
         toggleItem.title = "Start Tracking"
-        statusLabel.title = "Status: Stopped"
+        statusLabel.title = pyReady ? "Status: Ready" : "Status: Stopped"
     }
 
     @objc func togglePreview() {
@@ -272,22 +401,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func recalibrate() {
-        if isTracking {
-            stopTracking()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.startTracking() }
-        }
+        if isTracking { sendCommand("RECAL") }
     }
 
     func updateStatus() {
-        if isTracking, let proc = process, !proc.isRunning {
-            isTracking = false
-            toggleItem.title = "Start Tracking"
-            statusLabel.title = "Status: Crashed — restart"
-        }
+        // Crash detection handled by Process.terminationHandler
     }
 
     @objc func quitApp() {
-        stopTracking()
+        if let p = process, p.isRunning {
+            sendCommand("QUIT")
+            p.waitUntilExit()
+        }
         NSApplication.shared.terminate(self)
     }
 }

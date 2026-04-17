@@ -120,6 +120,137 @@ def get_head_pitch(landmarks):
     return offset / face_height
 
 
+def control_main():
+    """Persistent mode: init heavy deps once, toggle camera via stdin commands."""
+    import sys
+    import select
+
+    global PIPE_SCROLL_MODE
+    PIPE_SCROLL_MODE = True
+
+    if not os.path.exists(MODEL_PATH):
+        print(f"ERROR: Model not found at {MODEL_PATH}", flush=True)
+        return
+
+    options = FaceLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=MODEL_PATH),
+        running_mode=VisionRunningMode.VIDEO,
+        num_faces=1,
+        min_face_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+    landmarker = FaceLandmarker.create_from_options(options)
+
+    print("READY", flush=True)
+
+    def poll_cmd():
+        if select.select([sys.stdin], [], [], 0)[0]:
+            line = sys.stdin.readline()
+            return line.strip() if line else "QUIT"
+        return None
+
+    def wait_cmd():
+        line = sys.stdin.readline()
+        return line.strip() if line else "QUIT"
+
+    while True:
+        cmd = wait_cmd()
+        if cmd == "QUIT":
+            break
+        if cmd != "START":
+            continue
+
+        s = load_settings()
+        sensitivity, deadzone, cam = s["sensitivity"], s["deadzone"], s["cam"]
+
+        cap = cv2.VideoCapture(cam)
+        if not cap.isOpened():
+            print("ERROR: camera unavailable", flush=True)
+            continue
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+        print("Calibrating", flush=True)
+        neutral_pitch = None
+        calibration_readings = []
+        calibration_frames = 15
+        pitch_smooth = 0.0
+        alpha = 0.35
+        scroll_accumulator = 0.0
+        last_time = time.time()
+        last_settings_check = time.time()
+        frame_ts = 0
+        stop_all = False
+
+        while True:
+            ctrl = poll_cmd()
+            if ctrl in ("STOP", "QUIT"):
+                stop_all = (ctrl == "QUIT")
+                break
+            if ctrl == "RECAL":
+                neutral_pitch = None
+                calibration_readings = []
+                pitch_smooth = 0.0
+                scroll_accumulator = 0.0
+                print("Calibrating", flush=True)
+
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            now_check = time.time()
+            if now_check - last_settings_check > 0.5:
+                last_settings_check = now_check
+                try:
+                    fresh = load_settings()
+                    sensitivity = fresh["sensitivity"]
+                    deadzone = fresh["deadzone"]
+                except Exception:
+                    pass
+
+            frame = cv2.flip(frame, 1)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            frame_ts += 33
+            results = landmarker.detect_for_video(mp_image, frame_ts)
+
+            if not results.face_landmarks:
+                continue
+
+            raw_pitch = get_head_pitch(results.face_landmarks[0])
+
+            if neutral_pitch is None:
+                calibration_readings.append(raw_pitch)
+                if len(calibration_readings) >= calibration_frames:
+                    neutral_pitch = float(np.mean(calibration_readings))
+                    print("Calibrated", flush=True)
+                continue
+
+            pitch = raw_pitch - neutral_pitch
+            pitch_smooth = alpha * pitch + (1 - alpha) * pitch_smooth
+
+            effective = 0.0
+            if abs(pitch_smooth) > deadzone:
+                effective = pitch_smooth - np.sign(pitch_smooth) * deadzone
+
+            now = time.time()
+            dt = now - last_time
+            last_time = now
+
+            scroll_accumulator += -effective * sensitivity * 60 * dt
+            scroll_int = int(scroll_accumulator)
+            if scroll_int != 0:
+                scroll(scroll_int)
+                scroll_accumulator -= scroll_int
+
+        cap.release()
+        print("STOPPED", flush=True)
+        if stop_all:
+            break
+
+    landmarker.close()
+
+
 def main():
     # Load persisted settings as defaults
     saved = load_settings()
@@ -137,7 +268,13 @@ def main():
                         help="Run headless (no preview window)")
     parser.add_argument("--pipe-scroll", action="store_true",
                         help="Output scroll commands to stdout instead of posting CGEvents")
+    parser.add_argument("--control", action="store_true",
+                        help="Persistent control mode: read START/STOP/RECAL/QUIT from stdin")
     args = parser.parse_args()
+
+    if args.control:
+        control_main()
+        return
 
     global PIPE_SCROLL_MODE
     PIPE_SCROLL_MODE = args.pipe_scroll
@@ -181,7 +318,7 @@ def main():
 
     # Calibration
     neutral_pitch = None
-    calibration_frames = 30
+    calibration_frames = 15
     calibration_readings = []
 
     # Create preview window as always-on-top, small overlay that doesn't steal focus

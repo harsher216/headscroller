@@ -4,12 +4,13 @@ A macOS menu bar app that lets you scroll by tilting your head. Uses your webcam
 
 ## Download
 
-**[Download HeadScroller.zip](https://github.com/harsher216/headscroller/releases/latest/download/HeadScroller.zip)** (macOS 13+, Apple Silicon)
+**[Download HeadScroller.dmg](https://github.com/harsher216/headscroller/releases/latest/download/HeadScroller.dmg)** (macOS 13+, Apple Silicon)
 
-1. Download and unzip
-2. Drag `HeadScroller.app` to `/Applications/`
-3. Open it — the head icon appears in your menu bar
-4. Grant Camera and Accessibility permissions when prompted
+1. Double-click the downloaded `.dmg`
+2. Drag `HeadScroller.app` onto the `Applications` folder in the window that opens
+3. Open HeadScroller from Launchpad or `/Applications/`
+4. First launch: right-click the app → **Open** → **Open anyway** (bypasses the "unidentified developer" warning since the app is ad-hoc signed)
+5. The head icon appears in your menu bar — grant Camera and Accessibility permissions when prompted
 
 No Python, no terminal, no dependencies needed.
 

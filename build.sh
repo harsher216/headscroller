@@ -118,10 +118,24 @@ rm -rf "$ICONSET"
 echo "Signing..."
 codesign --force --deep --sign - "$APP_DIR"
 
+# ── Step 3: Build DMG installer ──────────────────────────────────────────────
+echo "Building DMG..."
+DMG_NAME="HeadScroller.dmg"
+STAGING="dmg-staging"
+rm -f "$DMG_NAME"
+rm -rf "$STAGING"
+mkdir "$STAGING"
+cp -R "$APP_DIR" "$STAGING/"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -volname "HeadScroller" -srcfolder "$STAGING" \
+    -ov -format UDZO "$DMG_NAME" > /dev/null
+rm -rf "$STAGING"
+
 echo ""
 echo "Built: $APP_DIR ($(du -sh "$APP_DIR" | cut -f1))"
+echo "Built: $DMG_NAME ($(du -sh "$DMG_NAME" | cut -f1))"
 echo ""
 echo "You can now:"
 echo "  open $APP_DIR                       # run it"
 echo "  cp -R $APP_DIR /Applications/       # install it"
-echo "  zip -r HeadScroller.zip $APP_DIR    # share it"
+echo "  open $DMG_NAME                      # test DMG install flow"

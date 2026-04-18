@@ -76,9 +76,9 @@ cat > "$CONTENTS/Info.plist" << 'EOF'
     <key>CFBundleIdentifier</key>
     <string>com.headscroller.app</string>
     <key>CFBundleVersion</key>
-    <string>1.1</string>
+    <string>1.3</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1</string>
+    <string>1.3</string>
     <key>CFBundleExecutable</key>
     <string>HeadScrollerMenuBar</string>
     <key>CFBundleIconFile</key>

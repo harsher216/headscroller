@@ -111,3 +111,11 @@ Settings are saved to `~/Library/Application Support/HeadScroller/settings.json`
 - **App doesn't scroll**: Make sure Accessibility access is granted in System Settings > Privacy & Security > Accessibility
 - **Wrong camera selected**: Change it from the Camera submenu. Camera 0 is usually an iPhone (Continuity Camera), Camera 1 is usually the built-in MacBook camera
 - **Tracking feels off**: Click Recalibrate and hold your head in a neutral position
+- **After updating: app stops scrolling even though Accessibility looks enabled**: macOS revokes Accessibility permission when an app's signature changes between versions. Fix:
+  1. Quit HeadScroller (menu bar → Quit)
+  2. System Settings → Privacy & Security → **Accessibility** → select HeadScroller → click the **−** button to remove it
+  3. Do the same under **Privacy & Security → Camera** if scrolling still fails
+  4. Replace the old app: drag the new `HeadScroller.app` into `/Applications/` (overwrite)
+  5. Open HeadScroller and re-grant both permissions when prompted
+
+  (This is an unavoidable side effect of the app being ad-hoc signed. A future release signed with an Apple Developer ID will make updates seamless.)

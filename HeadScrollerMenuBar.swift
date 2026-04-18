@@ -364,11 +364,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         showingPreview = !showingPreview
         previewItem.title = showingPreview ? "Hide Camera Preview" : "Show Camera Preview"
         previewItem.state = showingPreview ? .on : .off
-        // Restart to apply
-        if isTracking {
-            stopTracking()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.startTracking() }
-        }
+        sendCommand(showingPreview ? "PREVIEW_ON" : "PREVIEW_OFF")
     }
 
     // ── Settings controls (save to file, Python hot-reloads) ──────────

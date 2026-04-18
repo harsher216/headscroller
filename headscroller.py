@@ -120,6 +120,99 @@ def get_head_pitch(landmarks):
     return offset / face_height
 
 
+def draw_preview_overlay(frame, landmarks, pitch_smooth, deadzone, effective,
+                         sensitivity, neutral_pitch, calib_count, calib_total,
+                         face_detected):
+    """Draw tracking visualization on preview frame."""
+    h, w = frame.shape[:2]
+    calibrating = neutral_pitch is None
+
+    # Face reference dots
+    if face_detected and landmarks is not None:
+        for idx, color in ((NOSE_TIP, (0, 255, 255)),
+                           (FOREHEAD, (255, 200, 0)),
+                           (CHIN, (255, 200, 0))):
+            lm = landmarks[idx]
+            cx, cy = int(lm.x * w), int(lm.y * h)
+            cv2.circle(frame, (cx, cy), 4, color, -1)
+
+    # Pitch bar (right side)
+    bar_x = w - 50
+    bar_w = 24
+    bar_top = 70
+    bar_bot = h - 90
+    bar_mid = (bar_top + bar_bot) // 2
+    half_h = (bar_bot - bar_top) // 2
+    max_pitch = 0.25  # visual scale
+    dz_px = int(min(1.0, deadzone / max_pitch) * half_h)
+
+    # Bar background
+    cv2.rectangle(frame, (bar_x, bar_top), (bar_x + bar_w, bar_bot), (50, 50, 50), -1)
+    # Dead zone band (gray)
+    cv2.rectangle(frame, (bar_x, bar_mid - dz_px), (bar_x + bar_w, bar_mid + dz_px),
+                  (90, 90, 90), -1)
+    # Border
+    cv2.rectangle(frame, (bar_x, bar_top), (bar_x + bar_w, bar_bot), (220, 220, 220), 1)
+    # Zero line
+    cv2.line(frame, (bar_x - 4, bar_mid), (bar_x + bar_w + 4, bar_mid), (220, 220, 220), 1)
+
+    # Pitch indicator: head up (pitch < 0) → indicator moves up (lower y)
+    if not calibrating and face_detected:
+        display = -pitch_smooth
+        norm = max(-1.0, min(1.0, display / max_pitch))
+        ind_y = bar_mid - int(norm * half_h)
+        active = abs(pitch_smooth) > deadzone
+        color = (0, 255, 0) if active else (0, 200, 255)
+        cv2.circle(frame, (bar_x + bar_w // 2, ind_y), 9, color, -1)
+        cv2.circle(frame, (bar_x + bar_w // 2, ind_y), 9, (255, 255, 255), 1)
+
+    cv2.putText(frame, "UP", (bar_x - 6, bar_top - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
+    cv2.putText(frame, "DN", (bar_x - 6, bar_bot + 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
+
+    # Scroll arrow (left side)
+    arrow_x = 70
+    arrow_mid_y = h // 2
+    strength = min(1.0, abs(effective) / (max_pitch * 0.8)) if effective != 0 else 0
+    arrow_len = int(30 + strength * 60)
+    if effective < 0:  # head tilted up → scroll up
+        tip = (arrow_x, arrow_mid_y - arrow_len)
+        base = arrow_mid_y
+        pts = np.array([tip, (arrow_x - 22, base), (arrow_x + 22, base)], np.int32)
+        cv2.fillPoly(frame, [pts], (0, 255, 0))
+        cv2.putText(frame, "SCROLL UP", (arrow_x - 55, base + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+    elif effective > 0:  # head tilted down → scroll down
+        tip = (arrow_x, arrow_mid_y + arrow_len)
+        base = arrow_mid_y
+        pts = np.array([tip, (arrow_x - 22, base), (arrow_x + 22, base)], np.int32)
+        cv2.fillPoly(frame, [pts], (0, 255, 0))
+        cv2.putText(frame, "SCROLL DN", (arrow_x - 55, base - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+    else:
+        cv2.circle(frame, (arrow_x, arrow_mid_y), 18, (120, 120, 120), 2)
+        cv2.putText(frame, "IDLE", (arrow_x - 22, arrow_mid_y + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+
+    # Status banner
+    if not face_detected:
+        cv2.putText(frame, "No face detected", (20, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+    elif calibrating:
+        pct = int(calib_count / calib_total * 100) if calib_total else 0
+        cv2.putText(frame, f"Calibrating {pct}%  (look straight)", (20, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    else:
+        cv2.putText(frame, "Tracking", (20, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+    # Bottom readout
+    cv2.putText(frame,
+                f"pitch {pitch_smooth:+.3f}   deadzone {deadzone:.3f}   sens {sensitivity:.1f}",
+                (20, h - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
+
+
 def control_main():
     """Persistent mode: init heavy deps once, toggle camera via stdin commands."""
     import sys
@@ -153,10 +246,21 @@ def control_main():
         line = sys.stdin.readline()
         return line.strip() if line else "QUIT"
 
+    # Monotonic across start/stop cycles — landmarker is reused, so timestamps
+    # must keep increasing even after STOP resets session state.
+    frame_ts = 0
+    preview_on = False
+
     while True:
         cmd = wait_cmd()
         if cmd == "QUIT":
             break
+        if cmd == "PREVIEW_ON":
+            preview_on = True
+            continue
+        if cmd == "PREVIEW_OFF":
+            preview_on = False
+            continue
         if cmd != "START":
             continue
 
@@ -179,7 +283,6 @@ def control_main():
         scroll_accumulator = 0.0
         last_time = time.time()
         last_settings_check = time.time()
-        frame_ts = 0
         stop_all = False
 
         while True:
@@ -193,6 +296,15 @@ def control_main():
                 pitch_smooth = 0.0
                 scroll_accumulator = 0.0
                 print("Calibrating", flush=True)
+            if ctrl == "PREVIEW_ON":
+                preview_on = True
+            if ctrl == "PREVIEW_OFF":
+                preview_on = False
+                try:
+                    cv2.destroyAllWindows()
+                    cv2.waitKey(1)
+                except Exception:
+                    pass
 
             ret, frame = cap.read()
             if not ret:
@@ -214,36 +326,55 @@ def control_main():
             frame_ts += 33
             results = landmarker.detect_for_video(mp_image, frame_ts)
 
-            if not results.face_landmarks:
-                continue
-
-            raw_pitch = get_head_pitch(results.face_landmarks[0])
-
-            if neutral_pitch is None:
-                calibration_readings.append(raw_pitch)
-                if len(calibration_readings) >= calibration_frames:
-                    neutral_pitch = float(np.mean(calibration_readings))
-                    print("Calibrated", flush=True)
-                continue
-
-            pitch = raw_pitch - neutral_pitch
-            pitch_smooth = alpha * pitch + (1 - alpha) * pitch_smooth
-
+            face_detected = bool(results.face_landmarks)
             effective = 0.0
-            if abs(pitch_smooth) > deadzone:
-                effective = pitch_smooth - np.sign(pitch_smooth) * deadzone
+            scroll_int = 0
+            landmarks = results.face_landmarks[0] if face_detected else None
 
-            now = time.time()
-            dt = now - last_time
-            last_time = now
+            if face_detected:
+                raw_pitch = get_head_pitch(landmarks)
 
-            scroll_accumulator += -effective * sensitivity * 60 * dt
-            scroll_int = int(scroll_accumulator)
-            if scroll_int != 0:
-                scroll(scroll_int)
-                scroll_accumulator -= scroll_int
+                if neutral_pitch is None:
+                    calibration_readings.append(raw_pitch)
+                    if len(calibration_readings) >= calibration_frames:
+                        neutral_pitch = float(np.mean(calibration_readings))
+                        print("Calibrated", flush=True)
+                else:
+                    pitch = raw_pitch - neutral_pitch
+                    pitch_smooth = alpha * pitch + (1 - alpha) * pitch_smooth
+
+                    if abs(pitch_smooth) > deadzone:
+                        effective = pitch_smooth - np.sign(pitch_smooth) * deadzone
+
+                    now = time.time()
+                    dt = now - last_time
+                    last_time = now
+
+                    scroll_accumulator += -effective * sensitivity * 60 * dt
+                    scroll_int = int(scroll_accumulator)
+                    if scroll_int != 0:
+                        scroll(scroll_int)
+                        scroll_accumulator -= scroll_int
+
+            if preview_on:
+                try:
+                    draw_preview_overlay(
+                        frame, landmarks, pitch_smooth, deadzone, effective,
+                        sensitivity, neutral_pitch, len(calibration_readings),
+                        calibration_frames, face_detected,
+                    )
+                    cv2.imshow("HeadScroller Preview", frame)
+                    cv2.waitKey(1)
+                except Exception as e:
+                    print(f"Preview error: {e}", flush=True)
+                    preview_on = False
 
         cap.release()
+        try:
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)
+        except Exception:
+            pass
         print("STOPPED", flush=True)
         if stop_all:
             break

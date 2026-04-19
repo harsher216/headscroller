@@ -1,6 +1,10 @@
 # Build output
 HeadScroller.app/
 HeadScroller.zip
+HeadScroller.dmg
+HeadScroller.temp.dmg
+dmg-staging/
+*.backup.png
 HeadScrollerMenuBar
 AppIcon.iconset/
 dist/

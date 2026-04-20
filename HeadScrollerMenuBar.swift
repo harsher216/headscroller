@@ -81,6 +81,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             <key>ProgramArguments</key><array><string>\(exePath)</string></array>
             <key>RunAtLoad</key><true/>
             <key>KeepAlive</key><true/>
+            <key>ThrottleInterval</key><integer>1</integer>
         </dict>
         </plist>
         """

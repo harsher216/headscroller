@@ -66,7 +66,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         try? data.write(to: url)
     }
 
+    func ensureLaunchAgentInstalled() {
+        let home = NSHomeDirectory()
+        let agentDir = "\(home)/Library/LaunchAgents"
+        let plistPath = "\(agentDir)/com.headscroller.menubar.plist"
+        guard let exePath = Bundle.main.executablePath else { return }
+
+        let expected = """
+        <?xml version=\"1.0\" encoding=\"UTF-8\"?>
+        <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+        <plist version=\"1.0\">
+        <dict>
+            <key>Label</key><string>com.headscroller.menubar</string>
+            <key>ProgramArguments</key><array><string>\(exePath)</string></array>
+            <key>RunAtLoad</key><true/>
+            <key>KeepAlive</key><true/>
+        </dict>
+        </plist>
+        """
+
+        try? FileManager.default.createDirectory(atPath: agentDir, withIntermediateDirectories: true)
+        let existing = (try? String(contentsOfFile: plistPath, encoding: .utf8)) ?? ""
+        let needsWrite = existing != expected
+        if needsWrite {
+            try? expected.write(toFile: plistPath, atomically: true, encoding: .utf8)
+        }
+
+        // Check if loaded
+        let listTask = Process()
+        listTask.launchPath = "/bin/launchctl"
+        listTask.arguments = ["list", "com.headscroller.menubar"]
+        listTask.standardOutput = Pipe()
+        listTask.standardError = Pipe()
+        try? listTask.run()
+        listTask.waitUntilExit()
+        let isLoaded = listTask.terminationStatus == 0
+
+        if !isLoaded || needsWrite {
+            let unload = Process()
+            unload.launchPath = "/bin/launchctl"
+            unload.arguments = ["unload", plistPath]
+            unload.standardError = Pipe()
+            try? unload.run(); unload.waitUntilExit()
+
+            let load = Process()
+            load.launchPath = "/bin/launchctl"
+            load.arguments = ["load", plistPath]
+            load.standardError = Pipe()
+            try? load.run(); load.waitUntilExit()
+
+            // Launchd will spawn our managed instance; bow out so there's only one.
+            exit(0)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ensureLaunchAgentInstalled()
         loadSettings()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)

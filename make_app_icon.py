@@ -39,10 +39,7 @@ def draw_head(size, color=(0, 0, 0, 255), scale=0.78):
     return layer
 
 
-# ── Menu bar icon: head on transparent bg (template rendering) ───────────────
-menu_icon = draw_head(SIZE, scale=0.82)
-menu_icon.save("MenuBarIcon.png")
-print(f"Wrote MenuBarIcon.png ({SIZE}x{SIZE})")
+# Menu bar icon kept as original 36x36 MenuBarIcon.png — do not regenerate.
 
 # ── App icon: rounded-square off-white bg + head ─────────────────────────────
 CORNER = int(SIZE * 0.22)

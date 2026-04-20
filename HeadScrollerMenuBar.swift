@@ -17,6 +17,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var previewProcess: Process?
     var isTracking = false
     var showingPreview = false
+    var isQuitting = false
     var toggleItem: NSMenuItem!
     var previewItem: NSMenuItem!
     var statusLabel: NSMenuItem!
@@ -320,6 +321,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.pyReady = false
                 self.stdinHandle = nil
                 self.process = nil
+                if self.isQuitting { return }
                 if self.isTracking {
                     self.isTracking = false
                     self.toggleItem.title = "Start Tracking"
@@ -405,6 +407,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func quitApp() {
+        isQuitting = true
         if let p = process, p.isRunning {
             sendCommand("QUIT")
             p.waitUntilExit()
